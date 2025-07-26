@@ -1,20 +1,19 @@
 <template>
   <div>
     <div class="flex justify-between mb-4 items-center">
-      <!-- Keyword Search -->
-       <div class="flex-shrink-0 mr-1">
+      <Button
+        label="Add Entry"
+        icon="pi pi-plus"
+        class="mr-1"
+        @click="addEntry"
+        aria-label="Add Entry"
+      />
+
+      <div class="flex-shrink-0 mr-1">
         <IconField>
           <InputText v-model="globalFilter" placeholder="Keyword Search" />
         </IconField>
-       </div>
-      
-
-      <!--<Button
-        label="Save Executions"
-        icon="pi pi-save"
-        class="p-button-sm"
-        @click="saveExecutionsToStorage"
-      />-->
+      </div>
 
       <div
         v-if="generalExecutions.length"
@@ -54,7 +53,6 @@
       <template #empty>No entries found.</template>
       <template #loading>Loading data. Please wait.</template>
 
-      <!-- Dynamic Columns -->
       <Column
         v-for="col in columns"
         :key="col.field"
@@ -71,7 +69,6 @@
         </template>
       </Column>
 
-      <!-- Edit Action Column -->
       <Column header="Actions" style="width:6rem" :exportable="false">
         <template #body="slotProps">
           <Button
@@ -83,7 +80,6 @@
       </Column>
     </DataTable>
 
-    <!-- Edit Dialog -->
     <Dialog
       v-model:visible="editDialog"
       header="Edit Entry"
@@ -91,7 +87,6 @@
       class="p-fluid"
       :style="{ width: '450px' }"
     >
-      <!-- Dialog executions and execute button grouped -->
       <div
         v-if="dialogExecutions.length"
         class="inline-flex mb-3 border border-gray-300 rounded-lg overflow-hidden w-auto"
@@ -117,7 +112,6 @@
         There are errors in the highlighted fields.
       </div>
 
-      <!-- Form fields -->
       <div v-for="col in columns" :key="col.field" class="p-field">
         <label :for="col.field">{{ col.header }}</label>
         <Chips
@@ -126,6 +120,7 @@
           v-model="editedEntry[col.field]"
           :disabled="col.readOnly"
           :class="{ 'p-invalid': !isFieldValid(col) }"
+          style="width: 100%;"
         />
         <InputText
           v-else
@@ -133,6 +128,7 @@
           v-model.trim="editedEntry[col.field]"
           :disabled="col.readOnly"
           :class="{ 'p-invalid': !isFieldValid(col) }"
+          style="width: 100%;"
         />
       </div>
 
@@ -146,8 +142,6 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue';
-import axios from 'axios';
-
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
@@ -157,8 +151,7 @@ import Chips from 'primevue/chips';
 import Select from 'primevue/select';
 import api from '@/utils/api';
 
-const props = defineProps(['caseName','topLevelTagName'])
-// States
+const props = defineProps(['caseName','topLevelTagName']);
 const columns = ref([]);
 const data = ref([]);
 const totalRecords = ref(0);
@@ -166,17 +159,15 @@ const loading = ref(false);
 const first = ref(0);
 const rows = ref(10);
 const globalFilter = ref('');
-// Edit Dialog State
 const editDialog = ref(false);
 const editedEntry = ref({});
 const originalEntry = ref({});
+const isAddMode = ref(false);
 const formInvalid = computed(() => columns.value.some(col => !isFieldValid(col)));
-// Execution Menus
 const generalExecutions = ref([]);
 const dialogExecutions = ref([]);
 const selectedGeneralExecution = ref(null);
 const selectedDialogExecution = ref(null);
-// LocalStorage Keys
 const KEY_GENERAL = 'generalExecutions';
 const KEY_DIALOG = 'dialogExecutions';
 
@@ -187,33 +178,15 @@ function loadExecutionsFromStorage() {
     if (ge) generalExecutions.value = JSON.parse(ge);
     if (de) dialogExecutions.value = JSON.parse(de);
   } catch (e) {
-    console.error('Error parsing stored executions', e);
+    console.error(e);
   }
 }
-
-/*function saveExecutionsToStorage() {
-  try {
-    const defaultGeneral = [
-      { label: "RunAll", uri: "/api/runAll" },
-      { label: "Export", uri: "/api/export" }
-    ];
-    const defaultDialog = [
-      { label: "Approve", uri: "/api/approve" },
-      { label: "Reject", uri: "/api/reject" }
-    ];
-    localStorage.setItem(KEY_GENERAL, JSON.stringify(defaultGeneral));
-    localStorage.setItem(KEY_DIALOG, JSON.stringify(defaultDialog));
-    loadExecutionsFromStorage();
-  } catch (e) {
-    console.error('Error saving executions', e);
-  }
-}*/
 
 async function executeGeneral() {
   if (!selectedGeneralExecution.value?.uri) return;
   loading.value = true;
   try {
-    await axios.get(selectedGeneralExecution.value.uri);
+    await api.get(selectedGeneralExecution.value.uri);
     await loadData();
   } finally {
     loading.value = false;
@@ -223,15 +196,14 @@ async function executeGeneral() {
 async function executeDialog() {
   if (!selectedDialogExecution.value?.uri) return;
   try {
-    await axios.post(selectedDialogExecution.value.uri, { entryIds: originalEntry.value.__entries });
+    await api.post(selectedDialogExecution.value.uri, { entryIds: originalEntry.value.__entries });
     hideEditDialog();
     await loadData();
   } catch (e) {
-    console.error('Error executing dialog action', e);
+    console.error(e);
   }
 }
 
-// Load column definitions
 async function loadColumns() {
   loading.value = true;
   try {
@@ -262,13 +234,12 @@ async function loadColumns() {
     );
     columns.value = Object.values(map);
   } catch (err) {
-    console.error('Error loading columns', err);
+    console.error(err);
   } finally {
     loading.value = false;
   }
 }
 
-// Load data rows
 async function loadData() {
   loading.value = true;
   try {
@@ -284,7 +255,6 @@ async function loadData() {
     if (globalFilter.value) {
       params.append('globalFilter', globalFilter.value.replace(/'/g, "''"));
     }
-
     const res = await api.get(
       `/DataEntries/${props.caseName}/inmemoryodata`,
       { params }
@@ -301,7 +271,6 @@ async function loadData() {
       acc[subTag].push(item);
       return acc;
     }, {});
-
     data.value = Object.entries(groups).map(([tag, entries]) => {
       const row = { id: tag, __entries: {}, __entryValid: {} };
       entries.forEach(de => {
@@ -316,7 +285,7 @@ async function loadData() {
     });
     totalRecords.value = Number(res.data['@odata.count'] ?? data.value.length);
   } catch (err) {
-    console.error('Error loading data', err);
+    console.error(err);
   } finally {
     loading.value = false;
   }
@@ -328,7 +297,18 @@ function onPage(event) {
   loadData();
 }
 
+function addEntry() {
+  isAddMode.value = true;
+  const entry = {};
+  columns.value.forEach(col => {
+    entry[col.field] = col.multipleValues ? [] : '';
+  });
+  editedEntry.value = entry;
+  editDialog.value = true;
+}
+
 function openEditDialog(row) {
+  isAddMode.value = false;
   originalEntry.value = row;
   editedEntry.value = JSON.parse(JSON.stringify(row));
   editDialog.value = true;
@@ -336,6 +316,7 @@ function openEditDialog(row) {
 
 function hideEditDialog() {
   editDialog.value = false;
+  selectedDialogExecution.value = null;
 }
 
 function isFieldValid(col) {
@@ -343,30 +324,53 @@ function isFieldValid(col) {
 }
 
 async function saveEdit() {
-  const calls = [];
-  columns.value.forEach(col => {
-    if (col.readOnly) return;
-    const f = col.field;
-    const orig = originalEntry.value[f];
-    const curr = editedEntry.value[f];
-    const changed = col.multipleValues
-      ? JSON.stringify(curr) !== JSON.stringify(orig)
-      : String(curr) !== String(orig);
-    if (changed) {
-      calls.push(
-        api.put(
-          `/DataEntries/${props.caseName}/${originalEntry.value.__entries[f]}`,
-          { Values: col.multipleValues ? curr.map(String) : [String(curr || '')], Tags: null }
-        )
+  if (isAddMode.value) {
+    const dtos = columns.value
+      .filter(col => !col.readOnly)
+      .map(col => ({
+        DefinitionName: col.field,
+        Values: col.multipleValues
+          ? editedEntry.value[col.field].map(String)
+          : editedEntry.value[col.field]
+            ? [String(editedEntry.value[col.field])]
+            : ['']
+      }));
+    try {
+      await api.post(
+        `/DataEntries/${props.caseName}/multiple/${props.topLevelTagName}`, dtos, {  }
       );
+      hideEditDialog();
+      await loadData();
+    } catch (err) {
+      console.error(err);
     }
-  });
-  try {
-    await Promise.all(calls);
-    hideEditDialog();
-    loadData();
-  } catch (err) {
-    console.error('Error saving edit', err);
+  } else {
+    const calls = [];
+    columns.value.forEach(col => {
+      if (col.readOnly) return;
+      const f = col.field;
+      const orig = originalEntry.value[f];
+      const curr = editedEntry.value[f];
+      const changed = col.multipleValues
+        ? JSON.stringify(curr) !== JSON.stringify(orig)
+        : String(curr) !== String(orig);
+      const entryId = originalEntry.value.__entries[f];
+      if (changed && entryId) {
+        calls.push(
+          api.put(
+            `/DataEntries/${props.caseName}/${entryId}`,
+            { Values: col.multipleValues ? curr.map(String) : [String(curr || '')] }
+          )
+        );
+      }
+    });
+    try {
+      await Promise.all(calls);
+      hideEditDialog();
+      loadData();
+    } catch (err) {
+      console.error(err);
+    }
   }
 }
 
@@ -378,5 +382,4 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* Optional Custom Styles */
 </style>

@@ -24,8 +24,9 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
+import axios from 'axios';
 
 const router = useRouter();
 const route = useRoute()
@@ -48,6 +49,21 @@ const items = ref([
       ]
   }
 ]);
+
+async function loadMenuItems() {
+  try {
+    const response = await axios.get(
+      `/api/menu?category=`
+    );
+    //items.value = response.data;
+  } catch (error) {
+    console.error('Error loading menu:', error);
+  }
+}
+
+onMounted(() => {
+  loadMenuItems();
+});
 </script>
 
 <style scoped>
