@@ -170,6 +170,7 @@ const selectedGeneralExecution = ref(null);
 const selectedDialogExecution = ref(null);
 const KEY_GENERAL = 'generalExecutions';
 const KEY_DIALOG = 'dialogExecutions';
+let definitionMap = {};
 
 function loadExecutionsFromStorage() {
   try {
@@ -207,34 +208,72 @@ async function executeDialog() {
 async function loadColumns() {
   loading.value = true;
   try {
-    const res = await api.get(
+    // 1) Fetch AllowedDataDefinitions for this tag
+    const tagRes = await api.get(
       `/DataAnnotation/${props.caseName}/tag/odata`,
       {
         params: {
-          getSubTagsFromTopTag: props.topLevelTagName,
-          $select: 'Id',
-          $expand: 'dataEntries($select=Id;$expand=dataDefinition($select=Name,MultipleValues,ReadOnly,IsValid))'
+          // filter to exactly your tag by name:
+          $filter: `Name eq '${props.topLevelTagName.replace(/'/g, "''")}'`,
+          $select: 'AllowedDataDefinitions'
         }
       }
     );
-    const map = {};
-    res.data.forEach(ds =>
-      ds.DataEntries.forEach(de => {
-        const def = de.DataDefinition;
-        if (def && !map[def.Name]) {
-          map[def.Name] = {
-            field: def.Name,
-            header: def.Name,
-            multipleValues: def.MultipleValues,
-            readOnly: def.ReadOnly,
-            defValid: def.IsValid ?? true
-          };
+
+    const resData = tagRes.data;
+
+    let allowedNames = [];
+    if (Array.isArray(resData)) {
+      allowedNames = resData[0]?.AllowedDataDefinitions || [];
+    } else if (resData.value && Array.isArray(resData.value)) {
+      allowedNames = resData.value[0]?.AllowedDataDefinitions || [];
+    } else {
+      allowedNames = resData.AllowedDataDefinitions || [];
+    }
+
+    if (!allowedNames || allowedNames.length === 0) {
+      columns.value = [];
+      definitionMap = {};
+      return;
+    }
+
+    const nameList = allowedNames
+      .map(n => `'${n.replace(/'/g, "''")}'`)
+      .join(',');
+    const metaRes = await api.get(
+      `/DataDefinitions/${props.caseName}/odata`,
+      {
+        params: {
+          $filter: `Name in (${nameList})`,
+          $select: 'Id,Name,MultipleValues,ReadOnly,IsValid'
         }
-      })
+      }
     );
-    columns.value = Object.values(map);
+
+    const defs = Array.isArray(metaRes.data.value)
+      ? metaRes.data.value
+      : metaRes.data;
+
+    const orderedDefs = allowedNames.map(name => defs.find(d => d.Name === name)).filter(Boolean); 
+
+    definitionMap = {};
+    columns.value = orderedDefs.map(def => {
+      definitionMap[def.Id] = {
+        Name: def.Name,
+        MultipleValues: def.MultipleValues,
+        ReadOnly: def.ReadOnly,
+        IsValid: def.IsValid ?? true
+      };
+      return {
+        field: def.Name,
+        header: def.Name,
+        multipleValues: def.MultipleValues,
+        readOnly: def.ReadOnly,
+        defValid: def.IsValid ?? true
+      };
+    });
   } catch (err) {
-    console.error(err);
+    console.error('loadColumns failed:', err);
   } finally {
     loading.value = false;
   }
@@ -248,10 +287,9 @@ async function loadData() {
     params.append('$top', String(rows.value));
     params.append('$count', 'true');
     params.append('getSubTagsFromTopTag', props.topLevelTagName);
-    params.append(
-      '$expand',
-      'DataDefinition($select=Name,MultipleValues,ReadOnly,IsValid),Tags($select=Name)'
-    );
+    // only select the raw fields
+    params.append('$select', 'Id,DataDefinitionId,Values');
+    params.append('$expand', 'Tags($select=Name)');
     if (globalFilter.value) {
       params.append('globalFilter', globalFilter.value.replace(/'/g, "''"));
     }
@@ -264,28 +302,33 @@ async function loadData() {
       : Array.isArray(res.data.value)
       ? res.data.value
       : [];
+
     const groups = items.reduce((acc, item) => {
-      const subTag =
-        item.Tags?.find(t => t.Name !== props.caseName)?.Name || '‹no-tag›';
-      if (!acc[subTag]) acc[subTag] = [];
-      acc[subTag].push(item);
+      const tagName =
+        item.Tags?.find(t => t.Name !== props.caseName)?.Name ||
+        '‹no-tag›';
+      (acc[tagName] ||= []).push(item);
       return acc;
     }, {});
+
     data.value = Object.entries(groups).map(([tag, entries]) => {
       const row = { id: tag, __entries: {}, __entryValid: {} };
-      entries.forEach(de => {
-        const def = de.DataDefinition;
-        const key = def.Name;
-        const vals = de.Values ?? [];
-        row[key] = def.MultipleValues ? [...vals] : vals[0] || '';
-        row.__entries[key] = de.Id;
-        row.__entryValid[key] = def.IsValid ?? true;
+      entries.forEach(item => {
+        const meta = definitionMap[item.DataDefinitionId];
+        if (!meta) return;
+        const key = meta.Name;
+        const vals = item.Values || [];
+        row[key]             = meta.MultipleValues ? [...vals] : vals[0] || '';
+        row.__entries[key]   = item.Id;
+        row.__entryValid[key]= meta.IsValid;
       });
       return row;
     });
-    totalRecords.value = Number(res.data['@odata.count'] ?? data.value.length);
+
+    totalRecords.value =
+      Number(res.data['@odata.count']) || data.value.length;
   } catch (err) {
-    console.error(err);
+    console.error('loadData failed:', err);
   } finally {
     loading.value = false;
   }
